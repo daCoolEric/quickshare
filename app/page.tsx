@@ -1,72 +1,6 @@
-// import Image from "next/image";
-
-// export default function Home() {
-//   return (
-//     <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-//       <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-//         <Image
-//           className="dark:invert"
-//           src="/next.svg"
-//           alt="Next.js logo"
-//           width={100}
-//           height={20}
-//           priority
-//         />
-//         <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-//           <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-//             To get started, edit the page.tsx file.
-//           </h1>
-//           <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-//             Looking for a starting point or more instructions? Head over to{" "}
-//             <a
-//               href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-//               className="font-medium text-zinc-950 dark:text-zinc-50"
-//             >
-//               Templates
-//             </a>{" "}
-//             or the{" "}
-//             <a
-//               href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-//               className="font-medium text-zinc-950 dark:text-zinc-50"
-//             >
-//               Learning
-//             </a>{" "}
-//             center.
-//           </p>
-//         </div>
-//         <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-//           <a
-//             className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-//             href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-//             target="_blank"
-//             rel="noopener noreferrer"
-//           >
-//             <Image
-//               className="dark:invert"
-//               src="/vercel.svg"
-//               alt="Vercel logomark"
-//               width={16}
-//               height={16}
-//             />
-//             Deploy Now
-//           </a>
-//           <a
-//             className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-//             href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-//             target="_blank"
-//             rel="noopener noreferrer"
-//           >
-//             Documentation
-//           </a>
-//         </div>
-//       </main>
-//     </div>
-//   );
-// }
-
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   Upload,
   Download,
@@ -77,8 +11,11 @@ import {
   WifiOff,
   Check,
   AlertCircle,
+  Camera,
+  Copy,
+  Scan,
 } from "lucide-react";
-import Image from "next/image";
+import jsQR from "jsqr";
 
 type Status =
   | "idle"
@@ -107,8 +44,19 @@ export default function OfflineFileTransfer() {
     useState<RTCPeerConnection | null>(null);
   const [dataChannel, setDataChannel] = useState<RTCDataChannel | null>(null);
   const [receivedFileName, setReceivedFileName] = useState("");
+  const [showScanner, setShowScanner] = useState(false);
+  const [scanError, setScanError] = useState("");
+  const [scanningFor, setScanningFor] = useState<"connection" | "answer">(
+    "connection"
+  );
+  const [isScanning, setIsScanning] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const receivedChunksRef = useRef<ArrayBuffer[]>([]);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const scanningRef = useRef(false);
+  const animationFrameRef = useRef<number | null>(null);
 
   const createPeerConnection = (): RTCPeerConnection => {
     const pc = new RTCPeerConnection({
@@ -318,6 +266,7 @@ export default function OfflineFileTransfer() {
     if (dataChannel) {
       dataChannel.close();
     }
+    stopScanner();
     setFile(null);
     setConnectionCode("");
     setStatus("idle");
@@ -330,6 +279,184 @@ export default function OfflineFileTransfer() {
       fileInputRef.current.value = "";
     }
   };
+
+  // PRODUCTION-READY QR CODE SCANNER
+  const startScanner = async (type: "connection" | "answer") => {
+    setShowScanner(true);
+    setScanError("");
+    setScanningFor(type);
+    scanningRef.current = true;
+    setIsScanning(true);
+
+    try {
+      // Request camera access with optimal settings
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "environment", // Use back camera on mobile
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+      });
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+
+        // Wait for video to be ready
+        await new Promise<void>((resolve) => {
+          if (videoRef.current) {
+            videoRef.current.onloadedmetadata = () => {
+              videoRef.current?.play();
+              resolve();
+            };
+          }
+        });
+
+        // Start scanning loop
+        scanQRCode();
+      }
+    } catch (error) {
+      console.error("Error accessing camera:", error);
+      let errorMessage =
+        "Camera access denied. Please enable camera permissions in your browser settings.";
+
+      if (error instanceof Error) {
+        if (error.name === "NotAllowedError") {
+          errorMessage =
+            "Camera permission denied. Please allow camera access and try again.";
+        } else if (error.name === "NotFoundError") {
+          errorMessage = "No camera found on this device.";
+        } else if (error.name === "NotReadableError") {
+          errorMessage = "Camera is already in use by another application.";
+        }
+      }
+
+      setScanError(errorMessage);
+      scanningRef.current = false;
+      setIsScanning(false);
+    }
+  };
+
+  const stopScanner = () => {
+    scanningRef.current = false;
+    setIsScanning(false);
+
+    // Cancel animation frame
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+
+    // Stop video stream
+    if (videoRef.current?.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach((track) => {
+        track.stop();
+      });
+      videoRef.current.srcObject = null;
+    }
+
+    setShowScanner(false);
+    setScanError("");
+  };
+
+  const scanQRCode = () => {
+    // Stop if scanning was cancelled
+    if (!scanningRef.current || !videoRef.current || !canvasRef.current) {
+      return;
+    }
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+
+    if (video.readyState === video.HAVE_ENOUGH_DATA && context) {
+      // Set canvas size to match video
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      // Draw current video frame to canvas
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // Get image data from canvas
+      const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+
+      // Scan for QR code using jsQR
+      const qrCode = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: "dontInvert", // Faster performance
+      });
+
+      if (qrCode && qrCode.data) {
+        console.log("QR Code detected!");
+
+        // Validate that it looks like a base64 encoded connection code
+        if (qrCode.data.length > 50) {
+          try {
+            // Try to decode to verify it's valid
+            const decoded = atob(qrCode.data);
+            const parsed = JSON.parse(decoded);
+
+            // Check if it has the expected structure
+            if ((parsed.offer || parsed.answer) && typeof parsed === "object") {
+              console.log("Valid connection code detected");
+
+              // Stop scanner
+              stopScanner();
+
+              // Process the scanned code based on what we're scanning for
+              if (scanningFor === "connection") {
+                handleConnectionCode(qrCode.data);
+              } else {
+                handleAnswerCode(qrCode.data);
+              }
+
+              return; // Exit scanning loop
+            }
+          } catch (error) {
+            console.log("Invalid QR code format, continuing scan...");
+          }
+        }
+      }
+    }
+
+    // Continue scanning if still active
+    if (scanningRef.current) {
+      animationFrameRef.current = requestAnimationFrame(scanQRCode);
+    }
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert("✅ Code copied to clipboard! Share it with the other device.");
+    } catch (err) {
+      console.error("Failed to copy:", err);
+      // Fallback for older browsers
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      textArea.style.position = "fixed";
+      textArea.style.opacity = "0";
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand("copy");
+        alert("✅ Code copied to clipboard!");
+      } catch (e) {
+        alert(
+          "❌ Failed to copy. Please copy manually: " +
+            text.substring(0, 30) +
+            "..."
+        );
+      }
+      document.body.removeChild(textArea);
+    }
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopScanner();
+    };
+  }, []);
 
   const StatusIndicator = () => {
     const statusConfig: Record<
@@ -503,6 +630,13 @@ export default function OfflineFileTransfer() {
                       <p className="text-xs text-gray-500 text-center mb-4">
                         Connection Code: {connectionCode.substring(0, 20)}...
                       </p>
+                      <button
+                        onClick={() => copyToClipboard(connectionCode)}
+                        className="w-full py-2 px-4 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors flex items-center justify-center gap-2"
+                      >
+                        <Copy className="w-4 h-4" />
+                        Copy Code
+                      </button>
                     </div>
                   )}
 
@@ -511,15 +645,101 @@ export default function OfflineFileTransfer() {
                       <p className="text-sm font-medium text-gray-700 mb-3 text-center">
                         Step 2: Scan the receiver&apos;s QR code
                       </p>
-                      <input
-                        type="text"
-                        placeholder="Or paste the answer code here"
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                        onPaste={(e) => {
-                          const code = e.clipboardData.getData("text");
-                          handleAnswerCode(code);
-                        }}
-                      />
+
+                      {!showScanner ? (
+                        <div className="space-y-3">
+                          <button
+                            onClick={() => startScanner("answer")}
+                            className="w-full py-3 px-4 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center justify-center gap-2"
+                          >
+                            <Camera className="w-5 h-5" />
+                            Scan QR Code with Camera
+                          </button>
+                          <div className="relative">
+                            <div className="absolute inset-0 flex items-center">
+                              <div className="w-full border-t border-gray-300"></div>
+                            </div>
+                            <div className="relative flex justify-center text-sm">
+                              <span className="px-2 bg-white text-gray-500">
+                                or
+                              </span>
+                            </div>
+                          </div>
+                          <input
+                            type="text"
+                            placeholder="Paste the answer code here"
+                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                            onPaste={(e) => {
+                              const code = e.clipboardData.getData("text");
+                              handleAnswerCode(code);
+                            }}
+                          />
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          <div className="relative bg-black rounded-lg overflow-hidden">
+                            <video
+                              ref={videoRef}
+                              className="w-full h-64 object-cover"
+                              playsInline
+                              muted
+                            />
+                            <canvas ref={canvasRef} className="hidden" />
+
+                            {/* Scanning overlay */}
+                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                              <div className="relative w-48 h-48">
+                                {/* Scanning frame */}
+                                <div className="absolute inset-0 border-4 border-purple-500 rounded-lg">
+                                  <div className="absolute top-0 left-0 w-6 h-6 border-t-4 border-l-4 border-white"></div>
+                                  <div className="absolute top-0 right-0 w-6 h-6 border-t-4 border-r-4 border-white"></div>
+                                  <div className="absolute bottom-0 left-0 w-6 h-6 border-b-4 border-l-4 border-white"></div>
+                                  <div className="absolute bottom-0 right-0 w-6 h-6 border-b-4 border-r-4 border-white"></div>
+                                </div>
+
+                                {/* Scanning animation */}
+                                {isScanning && (
+                                  <div className="absolute inset-0 overflow-hidden rounded-lg">
+                                    <div className="absolute w-full h-0.5 bg-purple-400 animate-scan"></div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="absolute bottom-4 left-0 right-0 text-center">
+                              <p className="text-white text-sm bg-black bg-opacity-60 px-4 py-2 rounded-full inline-block">
+                                <Scan className="w-4 h-4 inline mr-2" />
+                                Point camera at QR code
+                              </p>
+                            </div>
+                          </div>
+
+                          {scanError && (
+                            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+                              {scanError}
+                            </div>
+                          )}
+
+                          <div className="flex gap-2">
+                            <button
+                              onClick={stopScanner}
+                              className="flex-1 py-2 px-4 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                            <input
+                              type="text"
+                              placeholder="Or paste code"
+                              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
+                              onPaste={(e) => {
+                                const code = e.clipboardData.getData("text");
+                                handleAnswerCode(code);
+                                stopScanner();
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -554,15 +774,100 @@ export default function OfflineFileTransfer() {
                     Scan the sender&apos;s QR code or paste the connection code
                     below
                   </p>
-                  <input
-                    type="text"
-                    placeholder="Paste connection code here"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                    onPaste={(e) => {
-                      const code = e.clipboardData.getData("text");
-                      handleConnectionCode(code);
-                    }}
-                  />
+
+                  {!showScanner ? (
+                    <div className="space-y-3">
+                      <button
+                        onClick={() => startScanner("connection")}
+                        className="w-full py-3 px-4 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center justify-center gap-2"
+                      >
+                        <Camera className="w-5 h-5" />
+                        Scan QR Code with Camera
+                      </button>
+                      <div className="relative">
+                        <div className="absolute inset-0 flex items-center">
+                          <div className="w-full border-t border-gray-300"></div>
+                        </div>
+                        <div className="relative flex justify-center text-sm">
+                          <span className="px-2 bg-white text-gray-500">
+                            or
+                          </span>
+                        </div>
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Paste connection code here"
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                        onPaste={(e) => {
+                          const code = e.clipboardData.getData("text");
+                          handleConnectionCode(code);
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="relative bg-black rounded-lg overflow-hidden">
+                        <video
+                          ref={videoRef}
+                          className="w-full h-64 object-cover"
+                          playsInline
+                          muted
+                        />
+                        <canvas ref={canvasRef} className="hidden" />
+
+                        {/* Scanning overlay */}
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                          <div className="relative w-48 h-48">
+                            <div className="absolute inset-0 border-4 border-purple-500 rounded-lg">
+                              <div className="absolute top-0 left-0 w-6 h-6 border-t-4 border-l-4 border-white"></div>
+                              <div className="absolute top-0 right-0 w-6 h-6 border-t-4 border-r-4 border-white"></div>
+                              <div className="absolute bottom-0 left-0 w-6 h-6 border-b-4 border-l-4 border-white"></div>
+                              <div className="absolute bottom-0 right-0 w-6 h-6 border-b-4 border-r-4 border-white"></div>
+                            </div>
+
+                            {/* Scanning animation */}
+                            {isScanning && (
+                              <div className="absolute inset-0 overflow-hidden rounded-lg">
+                                <div className="absolute w-full h-0.5 bg-purple-400 animate-scan"></div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="absolute bottom-4 left-0 right-0 text-center">
+                          <p className="text-white text-sm bg-black bg-opacity-60 px-4 py-2 rounded-full inline-block">
+                            <Scan className="w-4 h-4 inline mr-2" />
+                            Point camera at QR code
+                          </p>
+                        </div>
+                      </div>
+
+                      {scanError && (
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+                          {scanError}
+                        </div>
+                      )}
+
+                      <div className="flex gap-2">
+                        <button
+                          onClick={stopScanner}
+                          className="flex-1 py-2 px-4 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <input
+                          type="text"
+                          placeholder="Or paste code"
+                          className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
+                          onPaste={(e) => {
+                            const code = e.clipboardData.getData("text");
+                            handleConnectionCode(code);
+                            stopScanner();
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -583,6 +888,13 @@ export default function OfflineFileTransfer() {
                   <p className="text-xs text-gray-500 mb-4">
                     Answer Code: {connectionCode.substring(0, 20)}...
                   </p>
+                  <button
+                    onClick={() => copyToClipboard(connectionCode)}
+                    className="w-full py-2 px-4 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors flex items-center justify-center gap-2 mb-4"
+                  >
+                    <Copy className="w-4 h-4" />
+                    Copy Code
+                  </button>
                   {receivedFileName && (
                     <div className="bg-blue-50 rounded-lg p-4 mb-4">
                       <p className="text-sm text-gray-600">Waiting for:</p>
@@ -651,6 +963,21 @@ export default function OfflineFileTransfer() {
           </p>
         </div>
       </div>
+
+      <style jsx>{`
+        @keyframes scan {
+          0% {
+            top: 0;
+          }
+          100% {
+            top: 100%;
+          }
+        }
+
+        .animate-scan {
+          animation: scan 2s ease-in-out infinite;
+        }
+      `}</style>
     </div>
   );
 }
