@@ -55,12 +55,14 @@ export default function OfflineFileTransfer() {
     setFile(null);
     setShowScanner(false);
     setScanError("");
+    setIsScanning(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
   };
 
   const startScanner = (type: "connection" | "answer") => {
+    console.log(`Starting scanner for ${type}`);
     setShowScanner(true);
     setScanError("");
     setScanningFor(type);
@@ -68,17 +70,34 @@ export default function OfflineFileTransfer() {
   };
 
   const stopScanner = () => {
+    console.log("Stopping scanner");
     setIsScanning(false);
     setShowScanner(false);
     setScanError("");
   };
 
   const handleScanSuccess = (code: string) => {
+    console.log("QR code scanned, processing...");
+
+    // Process the code based on what we're scanning for
     if (scanningFor === "connection") {
       handleConnectionCode(code);
-    } else if (file) {
-      handleAnswerCode(code, file);
+    } else {
+      // This is an answer code for the sender
+      handleAnswerCode(code);
     }
+  };
+
+  const handlePasteConnectionCode = (code: string) => {
+    console.log("Connection code pasted");
+    stopScanner();
+    handleConnectionCode(code);
+  };
+
+  const handlePasteAnswerCode = (code: string) => {
+    console.log("Answer code pasted");
+    stopScanner();
+    handleAnswerCode(code);
   };
 
   const handleModeChange = (newMode: Mode) => {
@@ -192,7 +211,7 @@ export default function OfflineFileTransfer() {
                   {status === "ready" && (
                     <div className="mb-6">
                       <p className="text-sm font-medium text-gray-700 mb-3 text-center">
-                        Step 2: Scan the receiver's QR code
+                        Step 2: Scan the receiver's answer QR code
                       </p>
 
                       {!showScanner ? (
@@ -202,7 +221,7 @@ export default function OfflineFileTransfer() {
                             className="w-full py-3 px-4 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center justify-center gap-2"
                           >
                             <Camera className="w-5 h-5" />
-                            Scan QR Code with Camera
+                            Scan Answer QR Code
                           </button>
                           <div className="relative">
                             <div className="absolute inset-0 flex items-center">
@@ -220,7 +239,7 @@ export default function OfflineFileTransfer() {
                             className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                             onPaste={(e) => {
                               const code = e.clipboardData.getData("text");
-                              if (file) handleAnswerCode(code, file);
+                              handlePasteAnswerCode(code);
                             }}
                           />
                         </div>
@@ -231,10 +250,7 @@ export default function OfflineFileTransfer() {
                           onScanSuccess={handleScanSuccess}
                           onScanError={setScanError}
                           onCancel={stopScanner}
-                          onPaste={(code) => {
-                            if (file) handleAnswerCode(code, file);
-                            stopScanner();
-                          }}
+                          onPaste={handlePasteAnswerCode}
                         />
                       )}
                     </div>
@@ -271,7 +287,7 @@ export default function OfflineFileTransfer() {
                         className="w-full py-3 px-4 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center justify-center gap-2"
                       >
                         <Camera className="w-5 h-5" />
-                        Scan QR Code with Camera
+                        Scan Sender's QR Code
                       </button>
                       <div className="relative">
                         <div className="absolute inset-0 flex items-center">
@@ -289,7 +305,7 @@ export default function OfflineFileTransfer() {
                         className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                         onPaste={(e) => {
                           const code = e.clipboardData.getData("text");
-                          handleConnectionCode(code);
+                          handlePasteConnectionCode(code);
                         }}
                       />
                     </div>
@@ -300,10 +316,7 @@ export default function OfflineFileTransfer() {
                       onScanSuccess={handleScanSuccess}
                       onScanError={setScanError}
                       onCancel={stopScanner}
-                      onPaste={(code) => {
-                        handleConnectionCode(code);
-                        stopScanner();
-                      }}
+                      onPaste={handlePasteConnectionCode}
                     />
                   )}
                 </div>
@@ -313,7 +326,7 @@ export default function OfflineFileTransfer() {
                 <div className="text-center">
                   <QRCodeDisplay
                     code={connectionCode}
-                    title="Show this QR code to the sender"
+                    title="Step 2: Show this answer QR code to the sender"
                     subtitle={`Answer Code: ${connectionCode.substring(
                       0,
                       20
@@ -321,7 +334,7 @@ export default function OfflineFileTransfer() {
                   />
                   {receivedFileName && (
                     <div className="bg-blue-50 rounded-lg p-4 mb-4">
-                      <p className="text-sm text-gray-600">Waiting for:</p>
+                      <p className="text-sm text-gray-600">Ready to receive:</p>
                       <p className="font-medium text-gray-800">
                         {receivedFileName}
                       </p>
@@ -355,7 +368,8 @@ export default function OfflineFileTransfer() {
               <AlertCircle className="w-8 h-8 text-red-600 mx-auto mb-2" />
               <p className="text-red-800 font-medium mb-2">Connection Failed</p>
               <p className="text-sm text-red-700 mb-4">
-                Make sure both devices are on the same WiFi network
+                Make sure both devices are on the same WiFi network and try
+                again
               </p>
               <button
                 onClick={handleReset}

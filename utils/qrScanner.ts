@@ -31,6 +31,25 @@ export const stopCamera = (videoRef: HTMLVideoElement | null): void => {
   }
 };
 
+export const validateConnectionCode = (
+  code: string
+): { valid: boolean; type: "offer" | "answer" | null } => {
+  try {
+    const decoded = atob(code);
+    const parsed = JSON.parse(decoded);
+
+    if (parsed.offer && parsed.fileName) {
+      return { valid: true, type: "offer" };
+    }
+    if (parsed.answer) {
+      return { valid: true, type: "answer" };
+    }
+    return { valid: false, type: null };
+  } catch (error) {
+    return { valid: false, type: null };
+  }
+};
+
 export const scanQRFromVideo = (
   videoRef: HTMLVideoElement,
   canvasRef: HTMLCanvasElement
@@ -53,15 +72,10 @@ export const scanQRFromVideo = (
     });
 
     if (qrCode?.data) {
-      try {
-        const decoded = atob(qrCode.data);
-        const parsed = JSON.parse(decoded);
-
-        if ((parsed.offer || parsed.answer) && typeof parsed === "object") {
-          return qrCode.data;
-        }
-      } catch (error) {
-        console.log("Invalid QR code format");
+      const validation = validateConnectionCode(qrCode.data);
+      if (validation.valid) {
+        console.log(`Valid ${validation.type} QR code detected`);
+        return qrCode.data;
       }
     }
   }
