@@ -1,46 +1,39 @@
-// App.tsx
+// SimpleApp.tsx - Much simpler connection flow
 "use client";
 
 import { useState, useRef } from "react";
 import {
   Upload,
   Download,
-  QrCode,
   FileText,
   X,
   WifiOff,
-  Camera,
   AlertCircle,
+  Copy,
+  Check,
 } from "lucide-react";
 import { Mode } from "../utils/types";
-import { useFileTransfer } from "../hooks/useFileTransfer";
+import { useSimpleFileTransfer } from "../hooks/useFileTransfer";
 import StatusIndicator from "../components/StatusIndicator";
-import QRScanner from "../components/QRScanner";
-import QRCodeDisplay from "../components/QRCodeDisplay";
 import ProgressBar from "../components/ProgressBar";
 
-export default function OfflineFileTransfer() {
+export default function SimpleOfflineFileTransfer() {
   const [mode, setMode] = useState<Mode>("send");
   const [file, setFile] = useState<File | null>(null);
-  const [showScanner, setShowScanner] = useState(false);
-  const [scanError, setScanError] = useState("");
-  const [scanningFor, setScanningFor] = useState<"connection" | "answer">(
-    "connection"
-  );
-  const [isScanning, setIsScanning] = useState(false);
+  const [inputPeerId, setInputPeerId] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const {
     status,
     progress,
-    connectionCode,
+    peerId,
     receivedFileName,
     setupSender,
-    handleConnectionCode,
-    handleAnswerCode,
+    connectAsReceiver,
     reset,
-  } = useFileTransfer();
+  } = useSimpleFileTransfer();
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -53,56 +46,32 @@ export default function OfflineFileTransfer() {
   const handleReset = () => {
     reset();
     setFile(null);
-    setShowScanner(false);
-    setScanError("");
-    setIsScanning(false);
+    setInputPeerId("");
+    setCopied(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
   };
 
-  const startScanner = (type: "connection" | "answer") => {
-    console.log(`Starting scanner for ${type}`);
-    setShowScanner(true);
-    setScanError("");
-    setScanningFor(type);
-    setIsScanning(true);
-  };
-
-  const stopScanner = () => {
-    console.log("Stopping scanner");
-    setIsScanning(false);
-    setShowScanner(false);
-    setScanError("");
-  };
-
-  const handleScanSuccess = (code: string) => {
-    console.log("QR code scanned, processing...");
-
-    // Process the code based on what we're scanning for
-    if (scanningFor === "connection") {
-      handleConnectionCode(code);
-    } else {
-      // This is an answer code for the sender
-      handleAnswerCode(code);
-    }
-  };
-
-  const handlePasteConnectionCode = (code: string) => {
-    console.log("Connection code pasted");
-    stopScanner();
-    handleConnectionCode(code);
-  };
-
-  const handlePasteAnswerCode = (code: string) => {
-    console.log("Answer code pasted");
-    stopScanner();
-    handleAnswerCode(code);
-  };
-
   const handleModeChange = (newMode: Mode) => {
     setMode(newMode);
     handleReset();
+  };
+
+  const handleConnect = () => {
+    if (inputPeerId.trim().length === 6) {
+      connectAsReceiver(inputPeerId.trim());
+    }
+  };
+
+  const copyPeerId = async () => {
+    try {
+      await navigator.clipboard.writeText(peerId);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      alert("Failed to copy code");
+    }
   };
 
   return (
@@ -111,21 +80,23 @@ export default function OfflineFileTransfer() {
         <div className="bg-white rounded-2xl shadow-xl p-8 mt-8">
           <div className="text-center mb-8">
             <div className="flex justify-center mb-4">
-              <QrCode className="w-16 h-16 text-purple-600" />
+              <div className="w-16 h-16 bg-purple-600 rounded-full flex items-center justify-center">
+                <span className="text-3xl font-bold text-white">📁</span>
+              </div>
             </div>
             <h1 className="text-3xl font-bold text-gray-800 mb-2">
               Offline File Transfer
             </h1>
             <p className="text-gray-600">
-              Transfer files directly between devices - No internet required
+              Simple 6-digit code • No QR scanning needed
             </p>
           </div>
 
           <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-6 flex items-start gap-2">
             <WifiOff className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
             <p className="text-sm text-green-800">
-              This app works completely offline using peer-to-peer connection.
-              Both devices must be on the same WiFi network.
+              Both devices must be on the same WiFi network. Just share a simple
+              6-digit code!
             </p>
           </div>
 
@@ -197,66 +168,43 @@ export default function OfflineFileTransfer() {
                     </button>
                   </div>
 
-                  {connectionCode && status === "waiting" && (
-                    <QRCodeDisplay
-                      code={connectionCode}
-                      title="Step 1: Show this QR code to the receiver"
-                      subtitle={`Connection Code: ${connectionCode.substring(
-                        0,
-                        20
-                      )}...`}
-                    />
-                  )}
-
-                  {status === "ready" && (
+                  {peerId && status === "waiting" && (
                     <div className="mb-6">
-                      <p className="text-sm font-medium text-gray-700 mb-3 text-center">
-                        Step 2: Scan the receiver's answer QR code
-                      </p>
-
-                      {!showScanner ? (
-                        <div className="space-y-3">
-                          <button
-                            onClick={() => startScanner("answer")}
-                            className="w-full py-3 px-4 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center justify-center gap-2"
-                          >
-                            <Camera className="w-5 h-5" />
-                            Scan Answer QR Code
-                          </button>
-                          <div className="relative">
-                            <div className="absolute inset-0 flex items-center">
-                              <div className="w-full border-t border-gray-300"></div>
-                            </div>
-                            <div className="relative flex justify-center text-sm">
-                              <span className="px-2 bg-white text-gray-500">
-                                or
-                              </span>
-                            </div>
-                          </div>
-                          <input
-                            type="text"
-                            placeholder="Paste the answer code here"
-                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                            onPaste={(e) => {
-                              const code = e.clipboardData.getData("text");
-                              handlePasteAnswerCode(code);
-                            }}
-                          />
+                      <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-6 text-center">
+                        <p className="text-sm font-medium text-gray-700 mb-3">
+                          Share this code with the receiver:
+                        </p>
+                        <div className="bg-white rounded-lg p-4 mb-4 inline-block">
+                          <span className="text-5xl font-bold text-purple-600 tracking-widest">
+                            {peerId}
+                          </span>
                         </div>
-                      ) : (
-                        <QRScanner
-                          isScanning={isScanning}
-                          scanError={scanError}
-                          onScanSuccess={handleScanSuccess}
-                          onScanError={setScanError}
-                          onCancel={stopScanner}
-                          onPaste={handlePasteAnswerCode}
-                        />
-                      )}
+                        <button
+                          onClick={copyPeerId}
+                          className="w-full py-3 px-4 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center justify-center gap-2"
+                        >
+                          {copied ? (
+                            <>
+                              <Check className="w-5 h-5" />
+                              Copied!
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-5 h-5" />
+                              Copy Code
+                            </>
+                          )}
+                        </button>
+                        <p className="text-xs text-gray-500 mt-3">
+                          Waiting for receiver to connect...
+                        </p>
+                      </div>
                     </div>
                   )}
 
-                  {(status === "sending" || status === "complete") && (
+                  {(status === "sending" ||
+                    status === "complete" ||
+                    status === "connecting") && (
                     <ProgressBar
                       progress={progress}
                       status={status}
@@ -272,74 +220,62 @@ export default function OfflineFileTransfer() {
             <div>
               {status === "idle" && (
                 <div className="text-center py-8">
-                  <QrCode className="w-24 h-24 text-gray-300 mx-auto mb-6" />
+                  <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <Download className="w-12 h-12 text-gray-400" />
+                  </div>
                   <h3 className="text-xl font-semibold text-gray-800 mb-4">
                     Ready to Receive
                   </h3>
                   <p className="text-gray-600 mb-6">
-                    Scan the sender's QR code or paste the connection code below
+                    Enter the 6-digit code from the sender
                   </p>
 
-                  {!showScanner ? (
-                    <div className="space-y-3">
-                      <button
-                        onClick={() => startScanner("connection")}
-                        className="w-full py-3 px-4 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center justify-center gap-2"
-                      >
-                        <Camera className="w-5 h-5" />
-                        Scan Sender's QR Code
-                      </button>
-                      <div className="relative">
-                        <div className="absolute inset-0 flex items-center">
-                          <div className="w-full border-t border-gray-300"></div>
-                        </div>
-                        <div className="relative flex justify-center text-sm">
-                          <span className="px-2 bg-white text-gray-500">
-                            or
-                          </span>
-                        </div>
-                      </div>
-                      <input
-                        type="text"
-                        placeholder="Paste connection code here"
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                        onPaste={(e) => {
-                          const code = e.clipboardData.getData("text");
-                          handlePasteConnectionCode(code);
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <QRScanner
-                      isScanning={isScanning}
-                      scanError={scanError}
-                      onScanSuccess={handleScanSuccess}
-                      onScanError={setScanError}
-                      onCancel={stopScanner}
-                      onPaste={handlePasteConnectionCode}
+                  <div className="max-w-md mx-auto">
+                    <input
+                      type="text"
+                      value={inputPeerId}
+                      onChange={(e) => {
+                        const value = e.target.value
+                          .replace(/\D/g, "")
+                          .slice(0, 6);
+                        setInputPeerId(value);
+                      }}
+                      placeholder="000000"
+                      maxLength={6}
+                      className="w-full px-6 py-4 text-center text-3xl font-bold tracking-widest border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent mb-4"
                     />
-                  )}
+                    <button
+                      onClick={handleConnect}
+                      disabled={inputPeerId.length !== 6}
+                      className="w-full py-3 px-6 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed font-medium"
+                    >
+                      Connect
+                    </button>
+                  </div>
                 </div>
               )}
 
-              {connectionCode && status === "ready_to_receive" && (
-                <div className="text-center">
-                  <QRCodeDisplay
-                    code={connectionCode}
-                    title="Step 2: Show this answer QR code to the sender"
-                    subtitle={`Answer Code: ${connectionCode.substring(
-                      0,
-                      20
-                    )}...`}
-                  />
-                  {receivedFileName && (
-                    <div className="bg-blue-50 rounded-lg p-4 mb-4">
-                      <p className="text-sm text-gray-600">Ready to receive:</p>
-                      <p className="font-medium text-gray-800">
-                        {receivedFileName}
-                      </p>
-                    </div>
-                  )}
+              {status === "connecting" && (
+                <div className="text-center py-8">
+                  <div className="animate-pulse mb-4">
+                    <div className="w-16 h-16 bg-purple-200 rounded-full mx-auto"></div>
+                  </div>
+                  <p className="text-gray-600">Connecting to sender...</p>
+                </div>
+              )}
+
+              {receivedFileName && status === "ready_to_receive" && (
+                <div className="bg-blue-50 rounded-lg p-6 text-center mb-6">
+                  <FileText className="w-12 h-12 text-blue-600 mx-auto mb-3" />
+                  <p className="text-sm text-gray-600 mb-2">
+                    Ready to receive:
+                  </p>
+                  <p className="font-semibold text-gray-800 text-lg">
+                    {receivedFileName}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Waiting for sender to start transfer...
+                  </p>
                 </div>
               )}
 
@@ -368,8 +304,9 @@ export default function OfflineFileTransfer() {
               <AlertCircle className="w-8 h-8 text-red-600 mx-auto mb-2" />
               <p className="text-red-800 font-medium mb-2">Connection Failed</p>
               <p className="text-sm text-red-700 mb-4">
-                Make sure both devices are on the same WiFi network and try
-                again
+                {mode === "receive"
+                  ? "Invalid code or sender not ready. Check the code and try again."
+                  : "Make sure both devices are on the same WiFi network"}
               </p>
               <button
                 onClick={handleReset}
@@ -386,7 +323,7 @@ export default function OfflineFileTransfer() {
             🔒 100% Private • 📡 Peer-to-Peer • 🚫 No Internet Required
           </p>
           <p className="text-xs text-gray-500">
-            Works on local WiFi network only
+            Works on local WiFi network • No QR scanning needed
           </p>
         </div>
       </div>
